@@ -1,39 +1,41 @@
-# first of all import the socket library 
-import socket             
+import socket
+import threading # creates multiple threads, while one piece of code is waiting the other is running
 
-# next create a socket object 
-s = socket.socket()         
-print ("Socket successfully created")
+HEADER = 64
+PORT = 5050 # port that is not being used for anything else
+SERVER = socket.gethostbyname(socket.gethostname()) # gets the ip address
+ADDR = (SERVER, PORT)
+FORMAT = "utf-8"
+DISCONNECT_MESSAGE = "!DISCONNECT"
 
-# reserve a port on your computer in our 
-# case it is 12345 but it can be anything 
-port = 12345                
 
-# Next bind to the port 
-# we have not typed any ip in the ip field 
-# instead we have inputted an empty string 
-# this makes the server listen to requests 
-# coming from other computers on the network 
-s.bind(('', port))         
-print ("socket binded to %s" %(port)) 
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # first param. it is through the internet and the second is the type
+server.bind(ADDR)
 
-# put the socket into listening mode 
-s.listen(5)     
-print ("socket is listening")            
+def handle_client(conn, addr):
+    print(f"[NEW CONNECTION] {addr} connected.")
 
-# a forever loop until we interrupt it or 
-# an error occurs 
-while True: 
+    connected = True
+    while connected:
+        msg_length = conn.recv(HEADER).decode(FORMAT) # tells us how long the message is that is comming
+        if msg_length:
+            msg_length = int(msg_length) # use that and convert it into an integer
+            msg = conn.recv(msg_length).decode(FORMAT) # how many bits we will be reciving for the actual message
+            if msg == DISCONNECT_MESSAGE:
+                connected = False
 
-# Establish connection with client. 
-  c, addr = s.accept()     
-  print ('Got connection from', addr )
+            print(f"[{addr}] {msg}")
+            conn.send("Msg recieved".encode(FORMAT))
+    conn.close()
 
-  # send a thank you message to the client. encoding to send byte type. 
-  c.send('Thank you for connecting'.encode()) 
+def start():
+    server.listen() # listening for new connections
+    print(f"[LISTENING] Server is listening {SERVER}")
+    while True: # it will continue to listen until we don't want it to
+        conn, addr = server.accept()
+        thread = threading.Thread(target=handle_client, args=(conn, addr))
+        thread.start()
+        print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
 
-  # Close the connection with the client 
-  c.close()
-  
-  # Breaking once connection closed
-  break
+print("[STARTING] server is starting...")
+start()
