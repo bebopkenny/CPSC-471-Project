@@ -1,4 +1,5 @@
 import socket
+import sys
 
 HEADER = 64
 PORT = 5050
@@ -6,19 +7,33 @@ FORMAT = "utf-8"
 DISCONNECT_MESSAGE = "!DISCONNECT"
 SERVER = socket.gethostbyname(socket.gethostname())
 ADDR = (SERVER, PORT)
-
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect(ADDR)
+
+try:
+    client.connect(ADDR)
+    print("Connected to sever")
+except socket.error as e:
+    print(f"Connection error: {e}")
+    sys.exit()
 
 def send(msg):
     message = msg.encode(FORMAT) # whenever we send messages we need to encode first 
     msg_length = len(message)
     send_length = str(msg_length).encode(FORMAT)
     send_length += b' ' * (HEADER - len(send_length))
-    client.send(send_length)
-    client.send(message)
-    print(client.recv(2048).decode(FORMAT))
+    
+    try:
+        client.send(send_length)
+        client.send(message)
+        print(client.recv(2048).decode(FORMAT))
+    except socket.error as e:
+        print(f"Failed: {e}")
+        sys.exit()
 
-message = input("Enter text: ")
-send(message)
-send(DISCONNECT_MESSAGE)
+print("Connected to server. To disconnect from server: enter disconnect") 
+while True:
+    message = input("Enter text: ")
+    if message == "disconnect":
+        send(DISCONNECT_MESSAGE)
+        break
+    send(message)
