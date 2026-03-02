@@ -13,22 +13,28 @@ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # first param. it is 
 server.bind(ADDR)
 
 def handle_client(conn, addr):
-    print(f"[NEW CONNECTION] {addr} connected.")
+  print(f"[NEW CONNECTION] {addr} connected.")
 
-    connected = True
-    while connected:
-        msg_length = conn.recv(HEADER).decode(FORMAT) # tells us how long the message is that is comming
-        if msg_length:
-            msg_length = int(msg_length) # use that and convert it into an integer
-            msg = conn.recv(msg_length).decode(FORMAT) # how many bits we will be reciving for the actual message
-            if msg == DISCONNECT_MESSAGE:
-                connected = False
+  connected = True
+  while connected:
+    try:
+      msg_length = conn.recv(HEADER).decode(FORMAT) # tells us how long the message is that is comming
+      if msg_length:
+        msg_length = int(msg_length) # use that and convert it into an integer
+        msg = conn.recv(msg_length).decode(FORMAT) # how many bits we will be reciving for the actual message
+        if msg == DISCONNECT_MESSAGE:
+          connected = False
 
-            print(f"[{addr}] {msg}")
-            conn.send("Msg recieved".encode(FORMAT))
-    conn.close()
+        print(f"[{addr}] {msg}")
+        conn.send("Msg recieved".encode(FORMAT))
+    except socket.error as e:
+      print(f"Failed: {e}")
+      conn.close()
+      return
+  conn.close()
 
 def start():
+  try:
     server.listen() # listening for new connections
     print(f"[LISTENING] Server is listening {SERVER}")
     while True: # it will continue to listen until we don't want it to
@@ -36,6 +42,9 @@ def start():
         thread = threading.Thread(target=handle_client, args=(conn, addr))
         thread.start()
         print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
+  except KeyboardInterrupt:
+    print("\n [SHUTTING DOWN] Sever stopping")
+    server.close()
 
 print("[STARTING] server is starting...")
 start()
