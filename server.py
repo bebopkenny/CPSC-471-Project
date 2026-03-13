@@ -1,11 +1,10 @@
 import sys
 import socket
-import threading # creates multiple threads, while one piece of code is waiting the other is running
+import threading
 
 HEADER = 64
-DEFAULT_PORT = 5050 # port that is not being used for anything else
-SERVER = socket.gethostbyname(socket.gethostname()) # gets the ip address
-# ADDR = (SERVER, PORT)
+DEFAULT_PORT = 5050
+SERVER = socket.gethostbyname(socket.gethostname())
 FORMAT = "utf-8"
 DISCONNECT_MESSAGE = "!DISCONNECT"
 

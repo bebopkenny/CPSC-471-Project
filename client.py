@@ -1,15 +1,14 @@
-import socket
 import sys
+import socket
 
 HEADER = 64
 DEFAULT_PORT = 5050
 FORMAT = "utf-8"
 DISCONNECT_MESSAGE = "!DISCONNECT"
 SERVER = socket.gethostbyname(socket.gethostname())
-# ADDR = (SERVER, PORT)
 
 def send(client, msg):
-  message = msg.encode(FORMAT) # whenever we send messages we need to encode first 
+  message = msg.encode(FORMAT)
   msg_length = len(message)
   send_length = str(msg_length).encode(FORMAT)
   send_length += b' ' * (HEADER - len(send_length))
