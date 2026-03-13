@@ -1,10 +1,11 @@
+import sys
 import socket
 import threading # creates multiple threads, while one piece of code is waiting the other is running
 
 HEADER = 64
-PORT = 5050 # port that is not being used for anything else
+DEFAULT_PORT = 5050 # port that is not being used for anything else
 SERVER = socket.gethostbyname(socket.gethostname()) # gets the ip address
-ADDR = (SERVER, PORT)
+# ADDR = (SERVER, PORT)
 FORMAT = "utf-8"
 DISCONNECT_MESSAGE = "!DISCONNECT"
 
@@ -34,18 +35,26 @@ def start(server):
     server.listen() # listening for new connections
     print(f"[LISTENING] Server is listening {SERVER}")
     while True: # it will continue to listen until we don't want it to
-        conn, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(conn, addr))
-        thread.start()
-        print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
+      conn, addr = server.accept()
+      thread = threading.Thread(target=handle_client, args=(conn, addr))
+      thread.start()
+      print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
   except KeyboardInterrupt:
     print("\n [SHUTTING DOWN] Sever stopping")
     server.close()
 
 def main():
+  try:
+    port = int(sys.argv[1])
+    if not (1 <= port <= 9999):
+      port = DEFAULT_PORT
+  except (IndexError, ValueError, NameError):
+    port = DEFAULT_PORT
+  
   server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-  server.bind(ADDR)
+  server.bind((SERVER, port))
 
+  print(f"Using port {port}")
   print("[STARTING] server is starting...")
   start(server)
 
