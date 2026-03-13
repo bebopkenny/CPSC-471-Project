@@ -8,32 +8,28 @@ ADDR = (SERVER, PORT)
 FORMAT = "utf-8"
 DISCONNECT_MESSAGE = "!DISCONNECT"
 
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # first param. it is through the internet and the second is the type
-server.bind(ADDR)
-
 def handle_client(conn, addr):
   print(f"[NEW CONNECTION] {addr} connected.")
-
   connected = True
+
   while connected:
     try:
-      msg_length = conn.recv(HEADER).decode(FORMAT) # tells us how long the message is that is comming
+      msg_length = conn.recv(HEADER).decode(FORMAT) # tells us how long the message is that is coming
       if msg_length:
         msg_length = int(msg_length) # use that and convert it into an integer
-        msg = conn.recv(msg_length).decode(FORMAT) # how many bits we will be reciving for the actual message
+        msg = conn.recv(msg_length).decode(FORMAT) # how many bits we will be receiving for the actual message
         if msg == DISCONNECT_MESSAGE:
           connected = False
 
         print(f"[{addr}] {msg}")
-        conn.send("Msg recieved".encode(FORMAT))
+        conn.send("Msg received".encode(FORMAT))
     except socket.error as e:
       print(f"Failed: {e}")
       conn.close()
       return
   conn.close()
 
-def start():
+def start(server):
   try:
     server.listen() # listening for new connections
     print(f"[LISTENING] Server is listening {SERVER}")
@@ -46,5 +42,12 @@ def start():
     print("\n [SHUTTING DOWN] Sever stopping")
     server.close()
 
-print("[STARTING] server is starting...")
-start()
+def main():
+  server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  server.bind(ADDR)
+
+  print("[STARTING] server is starting...")
+  start(server)
+
+if __name__ == "__main__":
+  main()
