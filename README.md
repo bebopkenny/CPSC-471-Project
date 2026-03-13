@@ -20,9 +20,9 @@ A specific port number can be specified as a command line argument between 1 and
 See below for how these functions are called.
 
 ``` bash
-python3 server.py 5004
+python3 server.py <PORT NUMBER>
 ```
 
 ``` bash
-python3 client.py 5004
+python3 client.py <PORT NUMBER>
 ```
