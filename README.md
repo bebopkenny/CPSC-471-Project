@@ -26,3 +26,7 @@ python3 server.py <PORT NUMBER>
 ``` bash
 python3 client.py <PORT NUMBER>
 ```
+
+### Quitting
+
+To quit, type `disconnect` on each client side. Then, end the server process by pressing `ctrl + C`.
