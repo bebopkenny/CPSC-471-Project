@@ -165,7 +165,7 @@ def start(server):
       conn, addr = server.accept()
       thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
       thread.start()
-      print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
+      print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 2}")
   except KeyboardInterrupt:
     print("\n[SHUTTING DOWN] Server stopping.")
     server.close()
