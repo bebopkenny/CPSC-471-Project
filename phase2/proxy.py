@@ -1,5 +1,6 @@
 import sys
 import socket
+import threading
 from urllib.parse import urlsplit
 
 DEFAULT_PORT = 8080
@@ -155,7 +156,13 @@ def main():
   try:
     while True:
       conn, addr = server.accept()
-      handle_one_request(conn, addr)
+      worker = threading.Thread(
+        target=handle_one_request,
+        args=(conn, addr),
+        daemon=True,
+      )
+      worker.start()
+      print(f"[ACTIVE THREADS] {threading.active_count() - 1}")
   except KeyboardInterrupt:
     print("\n[SHUTTING DOWN] Proxy stopping.")
   finally:
