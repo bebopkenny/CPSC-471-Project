@@ -43,6 +43,23 @@ def parse_status_code(response):
     return None
 
 
+# send a minimal http error response back to the client
+# best-effort, we swallow socket errors here because the client may already be gone
+def send_error(conn, status, reason, detail=""):
+  body = f"{status} {reason}\n{detail}\n".encode("iso-8859-1")
+  response = (
+    f"HTTP/1.1 {status} {reason}\r\n"
+    f"Content-Type: text/plain; charset=iso-8859-1\r\n"
+    f"Content-Length: {len(body)}\r\n"
+    f"Connection: close\r\n"
+    f"\r\n"
+  ).encode("iso-8859-1") + body
+  try:
+    conn.sendall(response)
+  except socket.error:
+    pass
+
+
 # read until we hit the blank line that ends the headers
 # returns (headers, body) as bytes, or None if the client closed first
 def read_http_request(conn):
@@ -131,7 +148,11 @@ def read_full_response(origin_sock):
 def handle_one_request(conn, addr):
   print(f"[NEW CONNECTION] {addr} connected.")
   try:
-    parsed = read_http_request(conn)
+    try:
+      parsed = read_http_request(conn)
+    except socket.error as e:
+      print(f"[ERROR] {addr}: read failed: {e}")
+      return
     if parsed is None:
       print(f"[ERROR] {addr}: client closed before headers complete")
       return
@@ -140,6 +161,7 @@ def handle_one_request(conn, addr):
     request_line = parse_request_line(headers_bytes)
     if request_line is None:
       print(f"[ERROR] {addr}: malformed request line")
+      send_error(conn, 400, "Bad Request", "could not parse request line")
       return
     method, url, version = request_line
     print(f"[REQUEST] {method} {url} {version}")
@@ -147,6 +169,7 @@ def handle_one_request(conn, addr):
     dest = resolve_destination(url, headers_bytes)
     if dest is None:
       print(f"[ERROR] {addr}: could not resolve destination host")
+      send_error(conn, 400, "Bad Request", "missing Host header and no absolute url")
       return
     host, port, path = dest
 
@@ -164,21 +187,42 @@ def handle_one_request(conn, addr):
     origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     origin.settimeout(ORIGIN_TIMEOUT)
     try:
-      origin.connect((host, port))
-      origin.sendall(forwarded)
-      response = read_full_response(origin)
+      try:
+        origin.connect((host, port))
+      except socket.gaierror as e:
+        print(f"[ERROR] {addr}: dns lookup failed for {host}: {e}")
+        send_error(conn, 502, "Bad Gateway", f"could not resolve {host}")
+        return
+      except socket.timeout:
+        print(f"[ERROR] {addr}: connect to {host}:{port} timed out")
+        send_error(conn, 504, "Gateway Timeout", f"timed out connecting to {host}")
+        return
+      except socket.error as e:
+        print(f"[ERROR] {addr}: connect to {host}:{port} failed: {e}")
+        send_error(conn, 502, "Bad Gateway", f"could not connect to {host}:{port}")
+        return
+
+      try:
+        origin.sendall(forwarded)
+        response = read_full_response(origin)
+      except socket.error as e:
+        print(f"[ERROR] {addr}: origin io failed: {e}")
+        send_error(conn, 502, "Bad Gateway", "origin connection failed mid-request")
+        return
     finally:
       origin.close()
 
     print(f"[RESPONSE] {len(response)} bytes from {host}:{port}")
-    conn.sendall(response)
+    try:
+      conn.sendall(response)
+    except socket.error as e:
+      print(f"[ERROR] {addr}: client write failed: {e}")
+      return
 
     if cache_key is not None and parse_status_code(response) == 200:
       cache_put(cache_key, response)
       print(f"[CACHE STORE] {host}:{port}{path}")
 
-  except socket.error as e:
-    print(f"[ERROR] {addr}: {e}")
   finally:
     conn.close()
     print(f"[DISCONNECTED] {addr}")
