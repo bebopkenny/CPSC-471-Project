@@ -1,4 +1,5 @@
 import sys
+import time
 import socket
 import threading
 from urllib.parse import urlsplit
@@ -7,6 +8,39 @@ DEFAULT_PORT = 8080
 LISTEN_HOST = "0.0.0.0"
 RECV_CHUNK = 4096
 ORIGIN_TIMEOUT = 10
+CACHE_TTL = 60
+
+# (host, port, path) -> (expires_at, response_bytes)
+cache = {}
+cache_lock = threading.Lock()
+
+
+# look up a cached response, dropping it if expired
+def cache_get(key):
+  with cache_lock:
+    entry = cache.get(key)
+    if entry is None:
+      return None
+    expires_at, response = entry
+    if time.time() >= expires_at:
+      del cache[key]
+      return None
+    return response
+
+
+def cache_put(key, response):
+  with cache_lock:
+    cache[key] = (time.time() + CACHE_TTL, response)
+
+
+# pull the status code out of an http response, e.g. b"HTTP/1.1 200 OK\r\n..." -> 200
+# returns None if we can't parse it
+def parse_status_code(response):
+  try:
+    first_line = response.split(b"\r\n", 1)[0].decode("iso-8859-1")
+    return int(first_line.split(" ")[1])
+  except (IndexError, ValueError, UnicodeDecodeError):
+    return None
 
 
 # read until we hit the blank line that ends the headers
@@ -115,8 +149,16 @@ def handle_one_request(conn, addr):
       print(f"[ERROR] {addr}: could not resolve destination host")
       return
     host, port, path = dest
-    print(f"[FORWARD] {host}:{port}{path}")
 
+    cache_key = (host, port, path) if method == "GET" else None
+    if cache_key is not None:
+      cached = cache_get(cache_key)
+      if cached is not None:
+        print(f"[CACHE HIT] {host}:{port}{path} ({len(cached)} bytes)")
+        conn.sendall(cached)
+        return
+
+    print(f"[FORWARD] {host}:{port}{path}")
     forwarded = rewrite_request(headers_bytes, method, path, version) + body
 
     origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -130,6 +172,10 @@ def handle_one_request(conn, addr):
 
     print(f"[RESPONSE] {len(response)} bytes from {host}:{port}")
     conn.sendall(response)
+
+    if cache_key is not None and parse_status_code(response) == 200:
+      cache_put(cache_key, response)
+      print(f"[CACHE STORE] {host}:{port}{path}")
 
   except socket.error as e:
     print(f"[ERROR] {addr}: {e}")
