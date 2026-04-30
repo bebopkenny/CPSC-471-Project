@@ -1,5 +1,6 @@
 import sys
 import time
+import signal
 import socket
 import threading
 from urllib.parse import urlsplit
@@ -8,11 +9,50 @@ DEFAULT_PORT = 8080
 LISTEN_HOST = "0.0.0.0"
 RECV_CHUNK = 4096
 ORIGIN_TIMEOUT = 10
+CLIENT_TIMEOUT = 30
+SHUTDOWN_DEADLINE = 10
 CACHE_TTL = 60
+
+# rfc 2616: proxies must strip hop-by-hop headers when forwarding
+HOP_BY_HOP = (
+  b"connection",
+  b"proxy-connection",
+  b"keep-alive",
+  b"te",
+  b"trailer",
+  b"transfer-encoding",
+  b"upgrade",
+  b"proxy-authenticate",
+  b"proxy-authorization",
+)
 
 # (host, port, path) -> (expires_at, response_bytes)
 cache = {}
 cache_lock = threading.Lock()
+
+# track in-flight workers so we can drain them on shutdown
+workers = set()
+workers_lock = threading.Lock()
+
+# set by SIGINT handler so the accept loop knows to stop
+# we use an Event + accept timeout because on macOS python a blocked accept()
+# does not get interrupted by SIGINT
+shutdown_event = threading.Event()
+
+
+def install_signal_handler():
+  signal.signal(signal.SIGINT, lambda *_: shutdown_event.set())
+  signal.signal(signal.SIGTERM, lambda *_: shutdown_event.set())
+
+# serialize log writes so concurrent threads don't interleave lines
+log_lock = threading.Lock()
+
+
+def log(tag, message):
+  ts = time.strftime("%Y-%m-%d %H:%M:%S")
+  thread = threading.current_thread().name
+  with log_lock:
+    print(f"{ts} [{thread}] [{tag}] {message}", flush=True)
 
 
 # look up a cached response, dropping it if expired
@@ -123,12 +163,24 @@ def resolve_destination(url, headers_bytes):
   return host, port, url or "/"
 
 
-# swap the first line so the origin sees a relative path
+# swap the first line so the origin sees a relative path, and force Connection: close
 # origin servers want "GET / HTTP/1.1" instead of the absolute url proxies get
+# we also drop client keep-alive headers and add Connection: close so the origin
+# closes the socket as soon as the response is done, instead of making us wait
+# for ORIGIN_TIMEOUT on every request
 def rewrite_request(headers_bytes, method, path, version):
-  rest = headers_bytes.split(b"\r\n", 1)[1] if b"\r\n" in headers_bytes else b""
+  parts = headers_bytes.split(b"\r\n")
+  # parts[0] is the request line, the last two entries are empty (from the trailing \r\n\r\n)
+  # everything between is a header line
+  filtered = []
+  for line in parts[1:-2]:
+    name = line.split(b":", 1)[0].strip().lower()
+    if name in HOP_BY_HOP:
+      continue
+    filtered.append(line)
+  filtered.append(b"Connection: close")
   new_first_line = f"{method} {path} {version}".encode("iso-8859-1")
-  return new_first_line + b"\r\n" + rest
+  return new_first_line + b"\r\n" + b"\r\n".join(filtered) + b"\r\n\r\n"
 
 
 # keep reading from the origin until it closes the connection or we time out
@@ -146,30 +198,40 @@ def read_full_response(origin_sock):
 
 
 def handle_one_request(conn, addr):
-  print(f"[NEW CONNECTION] {addr} connected.")
+  start = time.time()
+  conn.settimeout(CLIENT_TIMEOUT)
+  log("CONN", f"open from {addr[0]}:{addr[1]}")
+  method = url = host = path = None
+  port = 0
+  status = None
+  bytes_out = 0
+  cache_state = "skip"
+
   try:
     try:
       parsed = read_http_request(conn)
     except socket.error as e:
-      print(f"[ERROR] {addr}: read failed: {e}")
+      log("ERROR", f"read failed: {e}")
       return
     if parsed is None:
-      print(f"[ERROR] {addr}: client closed before headers complete")
+      log("ERROR", "client closed before headers complete")
       return
     headers_bytes, body = parsed
 
     request_line = parse_request_line(headers_bytes)
     if request_line is None:
-      print(f"[ERROR] {addr}: malformed request line")
+      log("ERROR", "malformed request line")
       send_error(conn, 400, "Bad Request", "could not parse request line")
+      status = 400
       return
     method, url, version = request_line
-    print(f"[REQUEST] {method} {url} {version}")
+    log("REQ", f"{method} {url} {version}")
 
     dest = resolve_destination(url, headers_bytes)
     if dest is None:
-      print(f"[ERROR] {addr}: could not resolve destination host")
+      log("ERROR", "could not resolve destination host")
       send_error(conn, 400, "Bad Request", "missing Host header and no absolute url")
+      status = 400
       return
     host, port, path = dest
 
@@ -177,11 +239,14 @@ def handle_one_request(conn, addr):
     if cache_key is not None:
       cached = cache_get(cache_key)
       if cached is not None:
-        print(f"[CACHE HIT] {host}:{port}{path} ({len(cached)} bytes)")
+        log("CACHE", f"hit {host}:{port}{path} ({len(cached)} bytes)")
         conn.sendall(cached)
+        status = parse_status_code(cached)
+        bytes_out = len(cached)
+        cache_state = "hit"
         return
 
-    print(f"[FORWARD] {host}:{port}{path}")
+    log("FWD", f"{host}:{port}{path}")
     forwarded = rewrite_request(headers_bytes, method, path, version) + body
 
     origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -190,42 +255,59 @@ def handle_one_request(conn, addr):
       try:
         origin.connect((host, port))
       except socket.gaierror as e:
-        print(f"[ERROR] {addr}: dns lookup failed for {host}: {e}")
+        log("ERROR", f"dns lookup failed for {host}: {e}")
         send_error(conn, 502, "Bad Gateway", f"could not resolve {host}")
+        status = 502
         return
       except socket.timeout:
-        print(f"[ERROR] {addr}: connect to {host}:{port} timed out")
+        log("ERROR", f"connect to {host}:{port} timed out")
         send_error(conn, 504, "Gateway Timeout", f"timed out connecting to {host}")
+        status = 504
         return
       except socket.error as e:
-        print(f"[ERROR] {addr}: connect to {host}:{port} failed: {e}")
+        log("ERROR", f"connect to {host}:{port} failed: {e}")
         send_error(conn, 502, "Bad Gateway", f"could not connect to {host}:{port}")
+        status = 502
         return
 
       try:
         origin.sendall(forwarded)
         response = read_full_response(origin)
       except socket.error as e:
-        print(f"[ERROR] {addr}: origin io failed: {e}")
+        log("ERROR", f"origin io failed: {e}")
         send_error(conn, 502, "Bad Gateway", "origin connection failed mid-request")
+        status = 502
         return
     finally:
       origin.close()
 
-    print(f"[RESPONSE] {len(response)} bytes from {host}:{port}")
+    status = parse_status_code(response)
+    bytes_out = len(response)
+    log("RES", f"{status} {bytes_out} bytes from {host}:{port}")
+
     try:
       conn.sendall(response)
     except socket.error as e:
-      print(f"[ERROR] {addr}: client write failed: {e}")
+      log("ERROR", f"client write failed: {e}")
       return
 
-    if cache_key is not None and parse_status_code(response) == 200:
+    if cache_key is not None and status == 200:
       cache_put(cache_key, response)
-      print(f"[CACHE STORE] {host}:{port}{path}")
+      cache_state = "store"
+      log("CACHE", f"store {host}:{port}{path}")
+    elif cache_key is not None:
+      cache_state = "miss"
 
   finally:
     conn.close()
-    print(f"[DISCONNECTED] {addr}")
+    elapsed_ms = int((time.time() - start) * 1000)
+    log(
+      "SUMMARY",
+      f"{method or '-'} {url or '-'} -> {status if status is not None else '-'} "
+      f"{bytes_out}b cache={cache_state} {elapsed_ms}ms",
+    )
+    with workers_lock:
+      workers.discard(threading.current_thread())
 
 
 def main():
@@ -236,25 +318,50 @@ def main():
   except (IndexError, ValueError):
     port = DEFAULT_PORT
 
+  install_signal_handler()
+
   server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   server.bind((LISTEN_HOST, port))
   server.listen()
+  # short timeout so accept() periodically wakes up and we can check shutdown_event
+  server.settimeout(1.0)
 
-  print(f"[STARTING] Proxy listening on {LISTEN_HOST}:{port}")
+  log("START", f"proxy listening on {LISTEN_HOST}:{port}")
 
+  conn_count = 0
   try:
-    while True:
-      conn, addr = server.accept()
+    while not shutdown_event.is_set():
+      try:
+        conn, addr = server.accept()
+      except socket.timeout:
+        continue
+      conn_count += 1
       worker = threading.Thread(
         target=handle_one_request,
         args=(conn, addr),
-        daemon=True,
+        name=f"worker-{conn_count}",
       )
+      with workers_lock:
+        workers.add(worker)
       worker.start()
-      print(f"[ACTIVE THREADS] {threading.active_count() - 1}")
-  except KeyboardInterrupt:
-    print("\n[SHUTTING DOWN] Proxy stopping.")
+      log("ACCEPT", f"active workers: {len(workers)}")
+
+    log("STOP", "proxy shutting down, draining in-flight workers")
+    deadline = time.time() + SHUTDOWN_DEADLINE
+    with workers_lock:
+      snapshot = list(workers)
+    for w in snapshot:
+      remaining = deadline - time.time()
+      if remaining <= 0:
+        break
+      w.join(timeout=remaining)
+    with workers_lock:
+      stragglers = len(workers)
+    if stragglers:
+      log("STOP", f"timed out with {stragglers} workers still running")
+    else:
+      log("STOP", "shutdown complete")
   finally:
     server.close()
 
