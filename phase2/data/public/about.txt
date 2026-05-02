@@ -1,0 +1,5 @@
+about this service
+
+team: kenny garcia, mason jennings, kyler geesink, daniel boynton
+course: cpsc 471 computer communications, csu fullerton
+phase 2: cloud deployment with reverse proxy and authentication
