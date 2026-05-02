@@ -1,0 +1,7 @@
+welcome to the cpsc 471 inbound proxy demo.
+
+this file lives in /public/ so anyone can read it without authentication.
+the inbound proxy sits in front of the data server and decides what to expose.
+
+try a private file too: curl -H "X-Auth-Token: <your-token>" http://<host>:8081/private/notes.txt
+the token value is whatever the operator passed via PROXY_AUTH_TOKEN when starting the proxy.

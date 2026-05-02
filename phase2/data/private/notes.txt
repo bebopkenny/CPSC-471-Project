@@ -1,0 +1,4 @@
+private notes
+
+this file is only reachable through the inbound proxy with a valid X-Auth-Token header.
+without the token, the proxy returns 401 and the request never touches the data server.
