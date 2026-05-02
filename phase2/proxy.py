@@ -1,3 +1,4 @@
+import select
 import sys
 import time
 import signal
@@ -12,6 +13,7 @@ ORIGIN_TIMEOUT = 10
 CLIENT_TIMEOUT = 30
 SHUTDOWN_DEADLINE = 10
 CACHE_TTL = 60
+TUNNEL_TIMEOUT = 60
 
 # rfc 2616: proxies must strip hop-by-hop headers when forwarding
 HOP_BY_HOP = (
@@ -197,6 +199,75 @@ def read_full_response(origin_sock):
   return b"".join(chunks)
 
 
+# splice two sockets together until either side closes or goes quiet for TUNNEL_TIMEOUT.
+# we never parse the data — it's encrypted TLS, so we just move bytes blindly.
+# select() lets us watch both directions at once without spinning.
+def pipe_sockets(client, origin):
+  client.settimeout(None)
+  origin.settimeout(None)
+  sockets = [client, origin]
+  bytes_transferred = 0
+  try:
+    while True:
+      readable, _, exceptional = select.select(sockets, [], sockets, TUNNEL_TIMEOUT)
+      if exceptional or not readable:
+        # either an error or the idle timeout fired — either way, tear down
+        break
+      for sock in readable:
+        other = origin if sock is client else client
+        try:
+          data = sock.recv(RECV_CHUNK)
+        except socket.error:
+          return bytes_transferred
+        if not data:
+          return bytes_transferred
+        try:
+          other.sendall(data)
+          bytes_transferred += len(data)
+        except socket.error:
+          return bytes_transferred
+  except Exception:
+    pass
+  return bytes_transferred
+
+
+# handle a CONNECT request by opening a raw TCP tunnel to the destination.
+# the client and origin exchange TLS directly — we never see the plaintext.
+# host and port are already parsed from the CONNECT request line by the caller.
+def handle_connect(conn, addr, host, port):
+  log("TUNNEL", f"opening tunnel to {host}:{port}")
+  origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  origin.settimeout(ORIGIN_TIMEOUT)
+  try:
+    try:
+      origin.connect((host, port))
+    except socket.gaierror as e:
+      log("ERROR", f"dns lookup failed for {host}: {e}")
+      send_error(conn, 502, "Bad Gateway", f"could not resolve {host}")
+      return
+    except socket.timeout:
+      log("ERROR", f"connect to {host}:{port} timed out")
+      send_error(conn, 504, "Gateway Timeout", f"timed out connecting to {host}")
+      return
+    except socket.error as e:
+      log("ERROR", f"connect to {host}:{port} failed: {e}")
+      send_error(conn, 502, "Bad Gateway", f"could not connect to {host}:{port}")
+      return
+
+    # tell the client the tunnel is open — after this both sides speak TLS
+    try:
+      conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+    except socket.error as e:
+      log("ERROR", f"failed to send 200 to client: {e}")
+      return
+
+    log("TUNNEL", f"tunnel established to {host}:{port}, piping")
+    transferred = pipe_sockets(conn, origin)
+    log("TUNNEL", f"tunnel closed {host}:{port} ({transferred} bytes)")
+  finally:
+    origin.close()
+
+
 def handle_one_request(conn, addr):
   start = time.time()
   conn.settimeout(CLIENT_TIMEOUT)
@@ -226,6 +297,24 @@ def handle_one_request(conn, addr):
       return
     method, url, version = request_line
     log("REQ", f"{method} {url} {version}")
+
+    # CONNECT is used by browsers for HTTPS tunneling — the url is "host:port"
+    # rather than a full url, so we handle it before resolve_destination
+    if method == "CONNECT":
+      if ":" not in url:
+        send_error(conn, 400, "Bad Request", "CONNECT target must be host:port")
+        status = 400
+        return
+      host, port_str = url.rsplit(":", 1)
+      try:
+        port = int(port_str)
+      except ValueError:
+        send_error(conn, 400, "Bad Request", "invalid port in CONNECT target")
+        status = 400
+        return
+      handle_connect(conn, addr, host, port)
+      status = 200
+      return
 
     dest = resolve_destination(url, headers_bytes)
     if dest is None:
