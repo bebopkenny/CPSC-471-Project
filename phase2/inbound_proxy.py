@@ -7,7 +7,7 @@ import threading
 
 import boto3
 
-SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
+# SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
 sns = boto3.client("sns", region_name="us-east-1")
 
 DEFAULT_PORT = 8081
@@ -120,6 +120,7 @@ def parse_status_code(response):
 
 def notify_client_connected(client_ip, client_port):
   if not SNS_TOPIC_ARN:
+    log("ERROR", "SNS_TOPIC_ARN env var is not set")
     return
   
   message = f"""
