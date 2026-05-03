@@ -5,6 +5,11 @@ import signal
 import socket
 import threading
 
+import boto3
+
+SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
+sns = boto3.client("sns", region_name="us-east-1")
+
 DEFAULT_PORT = 8081
 LISTEN_HOST = "0.0.0.0"
 
@@ -113,6 +118,25 @@ def parse_status_code(response):
   except (IndexError, ValueError, UnicodeDecodeError):
     return None
 
+def notify_client_connected(client_ip, client_port):
+  if not SNS_TOPIC_ARN:
+    return
+  
+  message = f"""
+New client connected to proxy
+
+IP: {client_ip}
+Port: {client_port}
+Time: {time.strftime("%Y-%m-%d %H:%M:%S")}
+  """
+  try:
+    sns.publish(
+      TopicArn=SNS_TOPIC_ARN,
+      Subject="Proxy connection alert"
+      Message="Message"
+    )
+  except Exception as e:
+    log("ERROR", f"SNS message failed: {e}")
 
 # rebuild the request to send to the backend: keep the same path and headers
 # minus the strip set, force connection: close so the backend hangs up after
@@ -160,6 +184,9 @@ def handle_one_request(conn, addr):
   start = time.time()
   conn.settimeout(CLIENT_TIMEOUT)
   log("CONN", f"open from {addr[0]}:{addr[1]}")
+
+  notify_client_connected({addr[0]}, {addr[1]})
+
   method = path = None
   status = None
   bytes_out = 0
