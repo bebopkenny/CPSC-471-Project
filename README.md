@@ -33,7 +33,7 @@ To quit, type `disconnect` on each client side. Then, end the server process by 
 
 ---
 
-# Http proxy server part 2 
+# HTTP/HTTPS proxy server part 2 
 
 HTTP proxy server deployed on an AWS EC2 instance. It forwards HTTP requests from your local machine through the EC2 server to the destination.
 
@@ -83,6 +83,16 @@ This runs alongside the forward proxy on the same EC2 instance. The forward prox
 
 ## Running the reverse proxy
 
+The AWS Python dependency boto3 must be installed, which requires a python virtual environment:
+
+``` bash
+ssh -i "my-key.pem" ubuntu@<PUBLIC_IP>
+cd ~/CPSC-471-Project
+python3 -m venv env
+source env/bin/activate
+pip install boto3
+```
+
 The data server must be started first. The reverse proxy connects to it on every request and will return `502 Bad Gateway` if the data server is not running.
 
 SSH into the server, pull the latest code, and start both processes:
@@ -91,6 +101,7 @@ SSH into the server, pull the latest code, and start both processes:
 ssh -i "my-key.pem" ubuntu@<PUBLIC_IP>
 cd ~/CPSC-471-Project
 git pull origin main
+source env/bin/activate
 nohup python3 phase2/data_server.py 9000 > data_server.log 2>&1 &
 PROXY_AUTH_TOKEN=<YOUR_SECRET> nohup python3 phase2/inbound_proxy.py 8081 > inbound_proxy.log 2>&1 &
 exit
