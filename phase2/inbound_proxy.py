@@ -186,7 +186,11 @@ def handle_one_request(conn, addr):
   conn.settimeout(CLIENT_TIMEOUT)
   log("CONN", f"open from {addr[0]}:{addr[1]}")
 
-  notify_client_connected(addr[0], addr[1])
+  threading.Thread(
+    target=notify_client_connected,
+    args=(addr[0], addr[1]),
+    daemon=True
+  ).start()
 
   method = path = None
   status = None
