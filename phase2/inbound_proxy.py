@@ -125,7 +125,7 @@ def notify_client_connected(client_ip, client_port):
     return
   
   message = f"""
-New client connected to proxy
+New client connected to proxy and accessed a *private* asset
 
 IP: {client_ip}
 Port: {client_port}
@@ -134,7 +134,7 @@ Time: {time.strftime("%Y-%m-%d %H:%M:%S")}
   try:
     sns.publish(
       TopicArn=SNS_TOPIC_ARN,
-      Subject="Proxy connection alert",
+      Subject="Proxy connection alert - Private asset accessed",
       Message=message
     )
   except Exception as e:
