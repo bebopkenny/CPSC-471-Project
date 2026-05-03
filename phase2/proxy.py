@@ -403,35 +403,6 @@ def handle_one_request(conn, addr):
     with workers_lock:
       workers.discard(threading.current_thread())
 
-def try_inject_image(response):
-  header_end = response.find(b"\r\n\r\n")
-  if header_end == -1:
-    return response  # malformed, skip
-
-  headers = response[:header_end]
-  body = response[header_end+4:]
-  print(b"content-type:" in headers.lower() and b"text/html" in headers.lower())
-  if b"content-type:" in headers.lower() and b"text/html" in headers.lower():
-    injection = b'<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/California_State_University%2C_Fullerton_seal.svg/1280px-California_State_University%2C_Fullerton_seal.svg.png" style="width:100%;">'
-    body_lower = body.lower()
-    body_index = body_lower.find(b"<body")
-  
-
-    if body_index != -1:
-        # find end of <body ...>
-        tag_end = body.find(b">", body_index)
-        if tag_end != -1:
-            body = body[:tag_end+1] + injection + body[tag_end+1:]
-    new_length = len(body)
-
-    headers = re.sub(
-        b"Content-Length: \\d+",
-        f"Content-Length: {new_length}".encode(),
-        headers,
-        flags=re.IGNORECASE
-        )
-    response = headers + b"\r\n\r\n" + body
-  return response
 
 def inject_image(response_bytes):
   try:
@@ -443,7 +414,7 @@ def inject_image(response_bytes):
       return response_bytes
 
     html = body.decode("utf-8", errors="ignore")
-    print(headers.decode(errors="ignore"))
+    
     #injection = '<img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg" style="width:100%;">'
     injection = '<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/California_State_University%2C_Fullerton_seal.svg/1280px-California_State_University%2C_Fullerton_seal.svg.png" style="width:100%;">'
     #injection = '<div style="background:red;color:white;font-size:40px;">INJECTED</div>'
@@ -475,7 +446,6 @@ def inject_image(response_bytes):
     return headers + new_body
 
   except Exception as e:
-    print("Injection error:", e)
     return response_bytes
 
 def main():
