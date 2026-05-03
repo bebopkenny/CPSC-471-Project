@@ -133,7 +133,7 @@ Time: {time.strftime("%Y-%m-%d %H:%M:%S")}
     sns.publish(
       TopicArn=SNS_TOPIC_ARN,
       Subject="Proxy connection alert",
-      Message="Message"
+      Message=message
     )
   except Exception as e:
     log("ERROR", f"SNS message failed: {e}")
