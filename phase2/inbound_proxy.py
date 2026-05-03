@@ -186,12 +186,6 @@ def handle_one_request(conn, addr):
   conn.settimeout(CLIENT_TIMEOUT)
   log("CONN", f"open from {addr[0]}:{addr[1]}")
 
-  threading.Thread(
-    target=notify_client_connected,
-    args=(addr[0], addr[1]),
-    daemon=True
-  ).start()
-
   method = path = None
   status = None
   bytes_out = 0
@@ -227,6 +221,14 @@ def handle_one_request(conn, addr):
         send_error(conn, 403, "Forbidden", reason)
         status = 403
       return
+    
+    # Send message if accessing private files
+    if not any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
+      threading.Thread(
+      target=notify_client_connected,
+      args=(addr[0], addr[1]),
+      daemon=True
+    ).start()
 
     forwarded = rewrite_for_backend(headers_bytes, method, path, version) + body
 
