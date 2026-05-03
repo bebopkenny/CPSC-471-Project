@@ -132,7 +132,7 @@ Time: {time.strftime("%Y-%m-%d %H:%M:%S")}
   try:
     sns.publish(
       TopicArn=SNS_TOPIC_ARN,
-      Subject="Proxy connection alert"
+      Subject="Proxy connection alert",
       Message="Message"
     )
   except Exception as e:
