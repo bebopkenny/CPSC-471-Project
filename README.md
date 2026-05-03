@@ -98,6 +98,12 @@ exit
 
 Replace `<YOUR_SECRET>` with any token value you want clients to present. The reverse proxy will refuse to start if `PROXY_AUTH_TOKEN` is not set.
 
+The reverse proxy also sends an SNS email alert whenever a private file is accessed. This needs `boto3` installed (`pip install boto3`), the EC2 instance's IAM role must allow `sns:Publish`, and `SNS_TOPIC_ARN` must be exported in the same shell as the `nohup` line above:
+
+``` bash
+export SNS_TOPIC_ARN=arn:aws:sns:us-east-1:<account-id>:<topic-name>
+```
+
 Use the reverse proxy from your local machine. Public files need no authentication:
 
 ``` bash

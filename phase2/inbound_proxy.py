@@ -1,3 +1,4 @@
+import hmac
 import os
 import sys
 import time
@@ -177,7 +178,8 @@ def check_access(path, headers_bytes):
   token = get_header(headers_bytes, AUTH_HEADER)
   if token is None:
     return False, "missing token"
-  if token != AUTH_TOKEN:
+  # constant-time compare so a wrong token can't be guessed by timing the response
+  if not hmac.compare_digest(token, AUTH_TOKEN):
     return False, "invalid token"
   return True, "authenticated"
 

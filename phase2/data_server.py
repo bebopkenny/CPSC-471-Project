@@ -9,7 +9,8 @@ import threading
 # running on the same host. nothing on the public internet can hit this directly.
 DATA_HOST = "127.0.0.1"
 DEFAULT_PORT = 9000
-DATA_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# realpath so the safe_path comparison is consistent if any parent is a symlink
+DATA_ROOT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 
 RECV_CHUNK = 4096
 CLIENT_TIMEOUT = 30
@@ -80,7 +81,8 @@ def safe_path(url_path):
   rel = url_path.lstrip("/")
   if not rel:
     return None
-  candidate = os.path.normpath(os.path.join(DATA_ROOT, rel))
+  # realpath follows symlinks too, so a symlink inside data/ pointing outside is caught
+  candidate = os.path.realpath(os.path.join(DATA_ROOT, rel))
   if candidate != DATA_ROOT and not candidate.startswith(DATA_ROOT + os.sep):
     return None
   return candidate
