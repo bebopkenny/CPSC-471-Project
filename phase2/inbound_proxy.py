@@ -7,7 +7,8 @@ import threading
 
 import boto3
 
-# SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
+# must set SNS_TOPIC_ARN system variable first
+SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
 sns = boto3.client("sns", region_name="us-east-1")
 
 DEFAULT_PORT = 8081
