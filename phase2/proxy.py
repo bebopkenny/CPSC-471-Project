@@ -4,6 +4,7 @@ import time
 import signal
 import socket
 import threading
+import re
 from urllib.parse import urlsplit
 
 DEFAULT_PORT = 8080
@@ -179,8 +180,11 @@ def rewrite_request(headers_bytes, method, path, version):
     name = line.split(b":", 1)[0].strip().lower()
     if name in HOP_BY_HOP:
       continue
+    if name == b"accept-encoding":
+      continue
     filtered.append(line)
   filtered.append(b"Connection: close")
+  filtered.append(b"Accept-Encoding: identity")
   new_first_line = f"{method} {path} {version}".encode("iso-8859-1")
   return new_first_line + b"\r\n" + b"\r\n".join(filtered) + b"\r\n\r\n"
 
@@ -362,6 +366,7 @@ def handle_one_request(conn, addr):
       try:
         origin.sendall(forwarded)
         response = read_full_response(origin)
+        response = inject_image(response)
       except socket.error as e:
         log("ERROR", f"origin io failed: {e}")
         send_error(conn, 502, "Bad Gateway", "origin connection failed mid-request")
@@ -398,6 +403,80 @@ def handle_one_request(conn, addr):
     with workers_lock:
       workers.discard(threading.current_thread())
 
+def try_inject_image(response):
+  header_end = response.find(b"\r\n\r\n")
+  if header_end == -1:
+    return response  # malformed, skip
+
+  headers = response[:header_end]
+  body = response[header_end+4:]
+  print(b"content-type:" in headers.lower() and b"text/html" in headers.lower())
+  if b"content-type:" in headers.lower() and b"text/html" in headers.lower():
+    injection = b'<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/California_State_University%2C_Fullerton_seal.svg/1280px-California_State_University%2C_Fullerton_seal.svg.png" style="width:100%;">'
+    body_lower = body.lower()
+    body_index = body_lower.find(b"<body")
+  
+
+    if body_index != -1:
+        # find end of <body ...>
+        tag_end = body.find(b">", body_index)
+        if tag_end != -1:
+            body = body[:tag_end+1] + injection + body[tag_end+1:]
+    new_length = len(body)
+
+    headers = re.sub(
+        b"Content-Length: \\d+",
+        f"Content-Length: {new_length}".encode(),
+        headers,
+        flags=re.IGNORECASE
+        )
+    response = headers + b"\r\n\r\n" + body
+  return response
+
+def inject_image(response_bytes):
+  try:
+    header_end = response_bytes.index(b"\r\n\r\n") + 4
+    headers = response_bytes[:header_end]
+    body = response_bytes[header_end:]
+
+    if b"text/html" not in headers.lower():
+      return response_bytes
+
+    html = body.decode("utf-8", errors="ignore")
+    print(headers.decode(errors="ignore"))
+    #injection = '<img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg" style="width:100%;">'
+    injection = '<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/California_State_University%2C_Fullerton_seal.svg/1280px-California_State_University%2C_Fullerton_seal.svg.png" style="width:100%;">'
+    #injection = '<div style="background:red;color:white;font-size:40px;">INJECTED</div>'
+    
+    html = re.sub(
+      r"(<body[^>]*>)",
+      r"\1" + injection,
+      html,
+      count=1,
+      flags=re.IGNORECASE
+    )
+
+    new_body = html.encode("utf-8")
+
+    # fix content-length
+    headers = re.sub(
+      b"Content-Length: \\d+",
+      f"Content-Length: {len(new_body)}".encode(),
+      headers,
+      flags=re.IGNORECASE
+    )
+    headers = re.sub(
+      b"Content-Security-Policy:.*?\r\n",
+      b"",
+      headers,
+      flags=re.IGNORECASE
+    )
+
+    return headers + new_body
+
+  except Exception as e:
+    print("Injection error:", e)
+    return response_bytes
 
 def main():
   try:
