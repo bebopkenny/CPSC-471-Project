@@ -70,3 +70,53 @@ ssh -i "my-key.pem" ubuntu@<PUBLIC_IP> "cat ~/CPSC-471-Project/proxy.log"
 ### Stopping
 
 When done, stop the EC2 instance from the EC2 console so we don't run out of free credits. Right click the instance and click `Stop Instance`.
+
+---
+
+# Reverse proxy and data server part 2
+
+Inbound (reverse) proxy that protects files on a private data server. The data server binds to the loopback interface only, so the only way to reach its files from outside the EC2 instance is through the reverse proxy. The proxy applies access control before forwarding any request to the data server.
+
+Files under `phase2/data/public/` are open to anyone. Files under `phase2/data/private/` require an `X-Auth-Token` header that matches the secret the operator passed at startup through the `PROXY_AUTH_TOKEN` environment variable, so the token is never committed to source.
+
+This runs alongside the forward proxy on the same EC2 instance. The forward proxy uses port `8080`, the reverse proxy uses port `8081`, and the data server stays internal on port `9000`.
+
+## Running the reverse proxy
+
+The data server must be started first. The reverse proxy connects to it on every request and will return `502 Bad Gateway` if the data server is not running.
+
+SSH into the server, pull the latest code, and start both processes:
+
+``` bash
+ssh -i "my-key.pem" ubuntu@<PUBLIC_IP>
+cd ~/CPSC-471-Project
+git pull origin main
+nohup python3 phase2/data_server.py 9000 > data_server.log 2>&1 &
+PROXY_AUTH_TOKEN=<YOUR_SECRET> nohup python3 phase2/inbound_proxy.py 8081 > inbound_proxy.log 2>&1 &
+exit
+```
+
+Replace `<YOUR_SECRET>` with any token value you want clients to present. The reverse proxy will refuse to start if `PROXY_AUTH_TOKEN` is not set.
+
+Use the reverse proxy from your local machine. Public files need no authentication:
+
+``` bash
+curl http://<PUBLIC_IP>:8081/public/welcome.txt
+```
+
+Private files require the same token the proxy was started with:
+
+``` bash
+curl -H "X-Auth-Token: <YOUR_SECRET>" http://<PUBLIC_IP>:8081/private/notes.txt
+```
+
+To check the reverse proxy and data server logs:
+
+``` bash
+ssh -i "my-key.pem" ubuntu@<PUBLIC_IP> "cat ~/CPSC-471-Project/inbound_proxy.log"
+ssh -i "my-key.pem" ubuntu@<PUBLIC_IP> "cat ~/CPSC-471-Project/data_server.log"
+```
+
+### Stopping
+
+When done, stop the EC2 instance from the EC2 console so we don't run out of free credits. Right click the instance and click `Stop Instance`.
